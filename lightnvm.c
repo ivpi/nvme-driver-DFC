@@ -26,7 +26,6 @@
 #include <linux/bitops.h>
 #include <linux/lightnvm.h>
 #include <linux/vmalloc.h>
-#include <linux/sched/sysctl.h>
 
 enum nvme_nvm_admin_opcode {
 	nvme_nvm_admin_identity		= 0xe2,
@@ -328,7 +327,7 @@ static int nvme_nvm_identity(struct nvm_dev *nvmdev, struct nvm_id *nvm_id)
 		goto out;
 	}
 
-        nvm_id->ver_id = nvme_nvm_id->ver_id;
+	nvm_id->ver_id = nvme_nvm_id->ver_id;
 	nvm_id->vmnt = nvme_nvm_id->vmnt;
 	nvm_id->cgrps = nvme_nvm_id->cgrps;
 	nvm_id->cap = le32_to_cpu(nvme_nvm_id->cap);
@@ -400,7 +399,7 @@ static int nvme_nvm_get_bb_tbl(struct nvm_dev *nvmdev, struct ppa_addr ppa,
 	int tblsz = sizeof(struct nvme_nvm_bb_tbl) + nr_blks;
 	int ret = 0;
 
-        c.get_bb.opcode = nvme_nvm_admin_get_bb_tbl;
+	c.get_bb.opcode = nvme_nvm_admin_get_bb_tbl;
 	c.get_bb.nsid = cpu_to_le32(ns->ns_id);
 	c.get_bb.spba = cpu_to_le64(ppa.ppa);
 
@@ -438,7 +437,6 @@ static int nvme_nvm_get_bb_tbl(struct nvm_dev *nvmdev, struct ppa_addr ppa,
 	}
 
 	memcpy(blks, bb_tbl->blk, nvmdev->blks_per_lun * nvmdev->plane_mode);
-        
 out:
 	kfree(bb_tbl);
 	return ret;
@@ -535,72 +533,6 @@ static int nvme_nvm_submit_io(struct nvm_dev *dev, struct nvm_rq *rqd)
 	return 0;
 }
 
-static void nvme_nvm_end_user_io(struct request *rq, int error)
-{
-	struct completion *waiting = rq->end_io_data;
-
-	complete(waiting);
-}
-
-static int nvme_nvm_submit_user_io(struct nvm_dev *dev, struct nvm_rq *rqd,
-					void __user *data, unsigned len)
-{
-	struct request_queue *q = dev->q;
-	struct nvme_ns *ns = q->queuedata;
-	struct request *rq;
-	struct nvme_nvm_command *cmd;
-	DECLARE_COMPLETION_ONSTACK(wait);
-	unsigned long hang_check;
-	struct nvme_nvm_completion *cqe;
-
-	rq = blk_mq_alloc_request(q, rqd->opcode & 1, 0);
-	if (IS_ERR(rq))
-		return -ENOMEM;
-
-	cmd = kzalloc(sizeof(struct nvme_nvm_command) +
-				sizeof(struct nvme_nvm_completion), GFP_KERNEL);
-	if (!cmd) {
-		blk_mq_free_request(rq);
-		return -ENOMEM;
-	}
-
-	rq->cmd_type = REQ_TYPE_DRV_PRIV;
-	if (blk_rq_map_user(q, rq, NULL, data, len, GFP_KERNEL)) {
-		blk_mq_free_request(rq);
-		kfree(cmd);
-		return -ENOMEM;
-	}
-
-	nvme_nvm_rqtocmd(rq, rqd, ns, cmd);
-
-	rq->cmd = (unsigned char *)cmd;
-	rq->cmd_len = sizeof(struct nvme_nvm_command);
-	rq->special = cmd + 1;
-
-	rq->end_io_data = &wait;
-
-	blk_execute_rq_nowait(q, NULL, rq, 0, nvme_nvm_end_user_io);
-
-	/* Prevent hang_check timer from firing at us during very long I/O */
-	hang_check = 60;//sysctl_hung_task_timeout_secs;
-	if (hang_check)
-		while (!wait_for_completion_io_timeout(&wait,
-							hang_check * (HZ/2)));
-	else
-		wait_for_completion_io(&wait);
-
-	cqe = rq->special;
-	if (cqe)
-		rqd->ppa_status = le64_to_cpu(cqe->result);
-
-	rqd->error = rq->errors;
-
-	kfree(rq->cmd);
-	blk_mq_free_request(rq);
-
-	return 0;
-}
-
 static int nvme_nvm_erase_block(struct nvm_dev *dev, struct nvm_rq *rqd)
 {
 	struct request_queue *q = dev->q;
@@ -611,6 +543,7 @@ static int nvme_nvm_erase_block(struct nvm_dev *dev, struct nvm_rq *rqd)
 	c.erase.nsid = cpu_to_le32(ns->ns_id);
 	c.erase.spba = cpu_to_le64(rqd->ppa_addr.ppa);
 	c.erase.length = cpu_to_le16(rqd->nr_ppas - 1);
+	c.erase.control = cpu_to_le16(rqd->flags);
 
 	return nvme_submit_sync_cmd(q, (struct nvme_command *)&c, NULL, 0);
 }
@@ -650,7 +583,6 @@ static struct nvm_dev_ops nvme_nvm_dev_ops = {
 	.set_bb_tbl		= nvme_nvm_set_bb_tbl,
 
 	.submit_io		= nvme_nvm_submit_io,
-	.submit_user_io		= nvme_nvm_submit_user_io,
 	.erase_block		= nvme_nvm_erase_block,
 
 	.create_dma_pool	= nvme_nvm_create_dma_pool,

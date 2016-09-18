@@ -504,6 +504,30 @@ int nvme_identify_ns(struct nvme_ctrl *dev, unsigned nsid,
 
 	error = nvme_submit_sync_cmd(dev->admin_q, &c, *id,
 			sizeof(struct nvme_id_ns));
+
+/*
+        printk (KERN_INFO "nsze: %llx\n", (*id)->nsze);
+        printk (KERN_INFO "ncap: %llx\n", (*id)->ncap);
+        printk (KERN_INFO "nuse: %llx\n", (*id)->nuse);
+        printk (KERN_INFO "nsfeat: %x\n", (*id)->nsfeat);
+        printk (KERN_INFO "nlbaf: %x\n", (*id)->nlbaf);
+        printk (KERN_INFO "flbas: %x\n", (*id)->flbas);
+        printk (KERN_INFO "mc: %x\n", (*id)->mc);
+        printk (KERN_INFO "dpc: %x\n", (*id)->dpc);
+        printk (KERN_INFO "dps: %x\n", (*id)->dps);
+        printk (KERN_INFO "nmic: %x\n", (*id)->nmic);
+        printk (KERN_INFO "rescap: %x\n", (*id)->rescap);
+        printk (KERN_INFO "fpi: %x\n", (*id)->fpi);
+        printk (KERN_INFO "nawun: %x\n", (*id)->nawun);
+        printk (KERN_INFO "nvmcap[0]: %llx\n", (*id)->nvmcap[0]);
+        printk (KERN_INFO "nvmcap[1]: %llx\n", (*id)->nvmcap[1]);
+        printk (KERN_INFO "nguid: %x\n", (*id)->nguid[0]);
+        printk (KERN_INFO "lbaf[2].ms: %x\n", (*id)->lbaf[2].ms);
+        printk (KERN_INFO "lbaf[2].ds: %x\n", (*id)->lbaf[2].ds);
+        printk (KERN_INFO "lbaf[2].rp: %x\n", (*id)->lbaf[2].rp);
+        printk (KERN_INFO "vs[0]: %x\n", (*id)->vs[0]);
+        printk (KERN_INFO "vs[1]: %x\n", (*id)->vs[1]);
+*/
 	if (error)
 		kfree(*id);
 	return error;
@@ -789,7 +813,7 @@ static void nvme_config_discard(struct nvme_ns *ns)
 
 static int nvme_revalidate_ns(struct nvme_ns *ns, struct nvme_id_ns **id)
 {
-        if (nvme_identify_ns(ns->ctrl, ns->ns_id, id)) {
+	if (nvme_identify_ns(ns->ctrl, ns->ns_id, id)) {
 		dev_warn(ns->ctrl->dev, "%s: Identify failure\n", __func__);
 		return -ENODEV;
 	}
@@ -1473,7 +1497,7 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 
 	sprintf(disk_name, "nvme%dn%d", ctrl->instance, ns->instance);
 
-        if (nvme_nvm_ns_supported(ns, id)) {
+	if (nvme_nvm_ns_supported(ns, id)) {
 		if (nvme_nvm_register(ns, disk_name, node,
 							&nvme_ns_attr_group)) {
 			dev_warn(ctrl->dev, "%s: LightNVM init failure\n",
@@ -1543,7 +1567,7 @@ static void nvme_ns_remove(struct nvme_ns *ns)
 
 static void nvme_validate_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 {
-        struct nvme_ns *ns;
+	struct nvme_ns *ns;
 
 	ns = nvme_find_ns(ctrl, nsid);
 	if (ns) {
@@ -1556,7 +1580,7 @@ static void nvme_validate_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 static void nvme_remove_invalid_namespaces(struct nvme_ctrl *ctrl,
 					unsigned nsid)
 {
-        struct nvme_ns *ns, *next;
+	struct nvme_ns *ns, *next;
 
 	list_for_each_entry_safe(ns, next, &ctrl->namespaces, list) {
 		if (ns->ns_id > nsid)
@@ -1566,7 +1590,7 @@ static void nvme_remove_invalid_namespaces(struct nvme_ctrl *ctrl,
 
 static int nvme_scan_ns_list(struct nvme_ctrl *ctrl, unsigned nn)
 {
-        struct nvme_ns *ns;
+	struct nvme_ns *ns;
 	__le32 *ns_list;
 	unsigned i, j, nsid, prev = 0, num_lists = DIV_ROUND_UP(nn, 1024);
 	int ret = 0;
@@ -1577,14 +1601,14 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl, unsigned nn)
 
 	for (i = 0; i < num_lists; i++) {
 		ret = nvme_identify_ns_list(ctrl, prev, ns_list);
-                if (ret)
+		if (ret)
 			goto free;
 
 		for (j = 0; j < min(nn, 1024U); j++) {
-                        nsid = le32_to_cpu(ns_list[j]);
+			nsid = le32_to_cpu(ns_list[j]);
 			if (!nsid)
 				goto out;
-                        
+
 			nvme_validate_ns(ctrl, nsid);
 
 			while (++prev < nsid) {
@@ -1604,7 +1628,7 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl, unsigned nn)
 
 static void nvme_scan_ns_sequential(struct nvme_ctrl *ctrl, unsigned nn)
 {
-        unsigned i;
+	unsigned i;
 
 	lockdep_assert_held(&ctrl->namespaces_mutex);
 
@@ -1616,7 +1640,7 @@ static void nvme_scan_ns_sequential(struct nvme_ctrl *ctrl, unsigned nn)
 
 static void nvme_scan_work(struct work_struct *work)
 {
-   	struct nvme_ctrl *ctrl =
+	struct nvme_ctrl *ctrl =
 		container_of(work, struct nvme_ctrl, scan_work);
 	struct nvme_id_ctrl *id;
 	unsigned nn;
