@@ -280,6 +280,8 @@ static void __nvme_submit_cmd(struct nvme_queue *nvmeq,
 	else
 		memcpy(&nvmeq->sq_cmds[tail], cmd, sizeof(*cmd));
 
+	//nvm_nvmecmd_peek(cmd);
+
 	if (++tail == nvmeq->q_depth)
 		tail = 0;
 	writel(tail, nvmeq->q_db);
@@ -310,6 +312,11 @@ static int nvme_init_iod(struct request *rq, unsigned size,
 	iod->npages = -1;
 	iod->nents = 0;
 	iod->length = size;
+
+	if (!(rq->cmd_flags & REQ_DONTPREP)) {
+		rq->retries = 0;
+		rq->cmd_flags |= REQ_DONTPREP;
+	}
 	return 0;
 }
 
@@ -520,8 +527,8 @@ static int nvme_map_data(struct nvme_dev *dev, struct request *req,
 			goto out_unmap;
 	}
 
-	cmnd->rw.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
-	cmnd->rw.prp2 = cpu_to_le64(iod->first_dma);
+	cmnd->rw.dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
+	cmnd->rw.dptr.prp2 = cpu_to_le64(iod->first_dma);
 	if (blk_integrity_rq(req))
 		cmnd->rw.metadata = cpu_to_le64(sg_dma_address(&iod->meta_sg));
 	return BLK_MQ_RQ_QUEUE_OK;
@@ -623,6 +630,7 @@ static void nvme_complete_rq(struct request *req)
 
 	if (unlikely(req->errors)) {
 		if (nvme_req_needs_retry(req, req->errors)) {
+			req->retries++;
 			nvme_requeue_req(req);
 			return;
 		}
@@ -901,7 +909,7 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req, bool reserved)
 		 req->tag, nvmeq->qid);
 
 	abort_req = nvme_alloc_request(dev->ctrl.admin_q, &cmd,
-			BLK_MQ_REQ_NOWAIT);
+			BLK_MQ_REQ_NOWAIT, NVME_QID_ANY);
 	if (IS_ERR(abort_req)) {
 		atomic_inc(&dev->ctrl.abort_limit);
 		return BLK_EH_RESET_TIMER;
@@ -1383,16 +1391,8 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	if (result < 0)
 		return result;
 
-	/*
-	 * Degraded controllers might return an error when setting the queue
-	 * count.  We still want to be able to bring them online and offer
-	 * access to the admin queue, as that might be only way to fix them up.
-	 */
-	if (result > 0) {
-		dev_err(dev->ctrl.device,
-			"Could not set queue count (%d)\n", result);
+	if (nr_io_queues == 0)
 		return 0;
-	}
 
 	if (dev->cmb && NVME_CMB_SQS(dev->cmbsz)) {
 		result = nvme_cmb_qdepth(dev, nr_io_queues,
@@ -1520,7 +1520,7 @@ static int nvme_delete_queue(struct nvme_queue *nvmeq, u8 opcode)
 	cmd.delete_queue.opcode = opcode;
 	cmd.delete_queue.qid = cpu_to_le16(nvmeq->qid);
 
-	req = nvme_alloc_request(q, &cmd, BLK_MQ_REQ_NOWAIT);
+	req = nvme_alloc_request(q, &cmd, BLK_MQ_REQ_NOWAIT, NVME_QID_ANY);
 	if (IS_ERR(req))
 		return PTR_ERR(req);
 
@@ -1545,15 +1545,10 @@ static void nvme_disable_io_queues(struct nvme_dev *dev)
 		reinit_completion(&dev->ioq_wait);
  retry:
 		timeout = ADMIN_TIMEOUT;
-		for (; i > 0; i--) {
-			struct nvme_queue *nvmeq = dev->queues[i];
-
-			if (!pass)
-				nvme_suspend_queue(nvmeq);
-			if (nvme_delete_queue(nvmeq, opcode))
+		for (; i > 0; i--, sent++)
+			if (nvme_delete_queue(dev->queues[i], opcode))
 				break;
-			++sent;
-		}
+
 		while (sent--) {
 			timeout = wait_for_completion_io_timeout(&dev->ioq_wait, timeout);
 			if (timeout == 0)
@@ -1665,7 +1660,7 @@ static void nvme_dev_unmap(struct nvme_dev *dev)
 {
 	if (dev->bar)
 		iounmap(dev->bar);
-	pci_release_regions(to_pci_dev(dev->dev));
+	pci_release_mem_regions(to_pci_dev(dev->dev));
 }
 
 static void nvme_pci_disable(struct nvme_dev *dev)
@@ -1695,11 +1690,12 @@ static void nvme_dev_disable(struct nvme_dev *dev, bool shutdown)
 		nvme_stop_queues(&dev->ctrl);
 		csts = readl(dev->bar + NVME_REG_CSTS);
 	}
+
+	for (i = dev->queue_count - 1; i > 0; i--)
+		nvme_suspend_queue(dev->queues[i]);
+
 	if (csts & NVME_CSTS_CFS || !(csts & NVME_CSTS_RDY)) {
-		for (i = dev->queue_count - 1; i >= 0; i--) {
-			struct nvme_queue *nvmeq = dev->queues[i];
-			nvme_suspend_queue(nvmeq);
-		}
+		nvme_suspend_queue(dev->queues[0]);
 	} else {
 		nvme_disable_io_queues(dev);
 		nvme_disable_admin_queue(dev, shutdown);
@@ -1881,6 +1877,7 @@ static int nvme_pci_reset_ctrl(struct nvme_ctrl *ctrl)
 }
 
 static const struct nvme_ctrl_ops nvme_pci_ctrl_ops = {
+	.name			= "pcie",
 	.module			= THIS_MODULE,
 	.reg_read32		= nvme_pci_reg_read32,
 	.reg_write32		= nvme_pci_reg_write32,
@@ -1893,13 +1890,9 @@ static const struct nvme_ctrl_ops nvme_pci_ctrl_ops = {
 
 static int nvme_dev_map(struct nvme_dev *dev)
 {
-	int bars;
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
 
-	bars = pci_select_bars(pdev, IORESOURCE_MEM);
-	if (!bars)
-		return -ENODEV;
-	if (pci_request_selected_regions(pdev, bars, "nvme"))
+	if (pci_request_mem_regions(pdev, "nvme"))
 		return -ENODEV;
 
 	dev->bar = ioremap(pci_resource_start(pdev, 0), 8192);
@@ -1908,7 +1901,7 @@ static int nvme_dev_map(struct nvme_dev *dev)
 
        return 0;
   release:
-       pci_release_regions(pdev);
+       pci_release_mem_regions(pdev);
        return -ENODEV;
 }
 
@@ -1919,7 +1912,7 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	node = dev_to_node(&pdev->dev);
 	if (node == NUMA_NO_NODE)
-		set_dev_node(&pdev->dev, 0);
+		set_dev_node(&pdev->dev, first_memory_node);
 
 	dev = kzalloc_node(sizeof(*dev), GFP_KERNEL, node);
 	if (!dev)
@@ -2016,6 +2009,24 @@ static void nvme_remove(struct pci_dev *pdev)
 	nvme_put_ctrl(&dev->ctrl);
 }
 
+static int nvme_pci_sriov_configure(struct pci_dev *pdev, int numvfs)
+{
+	int ret = 0;
+
+	if (numvfs == 0) {
+		if (pci_vfs_assigned(pdev)) {
+			dev_warn(&pdev->dev,
+				"Cannot disable SR-IOV VFs while assigned\n");
+			return -EPERM;
+		}
+		pci_disable_sriov(pdev);
+		return 0;
+	}
+
+	ret = pci_enable_sriov(pdev, numvfs);
+	return ret ? ret : numvfs;
+}
+
 #ifdef CONFIG_PM_SLEEP
 static int nvme_suspend(struct device *dev)
 {
@@ -2101,6 +2112,8 @@ static const struct pci_device_id nvme_id_table[] = {
 				NVME_QUIRK_DISCARD_ZEROES, },
 	{ PCI_VDEVICE(INTEL, 0x5845),	/* Qemu emulated controller */
 		.driver_data = NVME_QUIRK_IDENTIFY_CNS, },
+	{ PCI_DEVICE(0x1c58, 0x0003),	/* HGST adapter */
+		.driver_data = NVME_QUIRK_DELAY_BEFORE_CHK_RDY, },
 	{ PCI_DEVICE_CLASS(PCI_CLASS_STORAGE_EXPRESS, 0xffffff) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_APPLE, 0x2001) },
 	{ 0, }
@@ -2116,6 +2129,7 @@ static struct pci_driver nvme_driver = {
 	.driver		= {
 		.pm	= &nvme_dev_pm_ops,
 	},
+	.sriov_configure = nvme_pci_sriov_configure,
 	.err_handler	= &nvme_err_handler,
 };
 
