@@ -551,6 +551,7 @@ static int nvme_nvm_submit_user_io(struct nvm_dev *dev, struct nvm_rq *rqd,
 	DECLARE_COMPLETION_ONSTACK(wait);
 	unsigned long hang_check;
 	struct nvme_nvm_completion *cqe;
+	struct bio *bio = NULL;
 
 	rq = blk_mq_alloc_request(q, rqd->opcode & 1, 0);
 	if (IS_ERR(rq))
@@ -564,10 +565,14 @@ static int nvme_nvm_submit_user_io(struct nvm_dev *dev, struct nvm_rq *rqd,
 	}
 
 	rq->cmd_type = REQ_TYPE_DRV_PRIV;
-	if (blk_rq_map_user(q, rq, NULL, data, len, GFP_KERNEL)) {
-		blk_mq_free_request(rq);
-		kfree(cmd);
-		return -ENOMEM;
+	if (data) {
+		if (blk_rq_map_user(q, rq, NULL, data, len, GFP_KERNEL)) {
+			blk_mq_free_request(rq);
+			kfree(cmd);
+			return -ENOMEM;
+		}
+		bio = rq->bio;
+		bio_get(bio);
 	}
 
 	nvme_nvm_rqtocmd(rq, rqd, ns, cmd);
@@ -594,6 +599,10 @@ static int nvme_nvm_submit_user_io(struct nvm_dev *dev, struct nvm_rq *rqd,
 
 	rqd->error = rq->errors;
 
+	if (bio) {
+		blk_rq_unmap_user(bio);
+		bio_put(bio);
+	}
 	kfree(rq->cmd);
 	blk_mq_free_request(rq);
 
@@ -691,13 +700,11 @@ int nvme_nvm_register(struct nvme_ns *ns, char *disk_name, int node,
 void nvme_nvm_unregister(struct nvme_ns *ns)
 {
 	nvm_unregister(ns->ndev);
-	kfree(ns->ndev);
 }
 
 /* move to shared place when used in multiple places. */
-/* move to shared place when used in multiple places. */
-#define PCI_VENDOR_ID_CNEX 0x1d1d
 #define PCI_VENDOR_ID_FREESCALE 0x1957
+#define PCI_VENDOR_ID_CNEX 0x1d1d
 #define PCI_DEVICE_ID_CNEX_WL 0x2807
 #define PCI_DEVICE_ID_CNEX_QEMU 0x1f1f
 #define PCI_DEVICE_ID_FREESCALE_DFC 0x8040
@@ -707,9 +714,6 @@ int nvme_nvm_ns_supported(struct nvme_ns *ns, struct nvme_id_ns *id)
 	struct nvme_ctrl *ctrl = ns->ctrl;
 	/* XXX: this is poking into PCI structures from generic code! */
 	struct pci_dev *pdev = to_pci_dev(ctrl->dev);
-
-        printk(KERN_INFO "lnvm: PCI_VENDOR: %x\n", pdev->vendor);
-        printk(KERN_INFO "lnvm: PCI_DEVICE: %x\n", pdev->device);
 
 	/* QEMU NVMe simulator - PCI ID + Vendor specific bit */
 	if (pdev->vendor == PCI_VENDOR_ID_CNEX &&
@@ -723,13 +727,20 @@ int nvme_nvm_ns_supported(struct nvme_ns *ns, struct nvme_id_ns *id)
 							id->vs[0] == 0x1)
 		return 1;
 
-        /* Freescale DFC - PCI ID + Vendor specific bit */
+	/* CNEX Labs - PCI ID + Vendor specific bit */
+	if (pdev->vendor == PCI_VENDOR_ID_CNEX &&
+				pdev->device == 0x0e01 &&
+							id->vs[0] == 0x1)
+		return 1;
+
+	/* Freescale DFC - PCI ID + Vendor specific bit */
 	if (pdev->vendor == PCI_VENDOR_ID_FREESCALE &&
 				pdev->device == PCI_DEVICE_ID_FREESCALE_DFC &&
 							id->vs[0] == 0x1) {
 		printk(KERN_INFO "lnvm: Dragon Fire Card NVMe driver support.\n");
                 return 1;
         }
+
 
 	return 0;
 }

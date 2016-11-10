@@ -185,7 +185,6 @@ struct nvme_ctrl_ops {
 	int (*reg_read64)(struct nvme_ctrl *ctrl, u32 off, u64 *val);
 	int (*reset_ctrl)(struct nvme_ctrl *ctrl);
 	void (*free_ctrl)(struct nvme_ctrl *ctrl);
-	void (*post_scan)(struct nvme_ctrl *ctrl);
 	void (*submit_async_event)(struct nvme_ctrl *ctrl, int aer_idx);
 	int (*delete_ctrl)(struct nvme_ctrl *ctrl);
 	const char *(*get_subsysnqn)(struct nvme_ctrl *ctrl);
@@ -293,9 +292,9 @@ int nvme_identify_ns(struct nvme_ctrl *dev, unsigned nsid,
 		struct nvme_id_ns **id);
 int nvme_get_log_page(struct nvme_ctrl *dev, struct nvme_smart_log **log);
 int nvme_get_features(struct nvme_ctrl *dev, unsigned fid, unsigned nsid,
-			dma_addr_t dma_addr, u32 *result);
+		      void *buffer, size_t buflen, u32 *result);
 int nvme_set_features(struct nvme_ctrl *dev, unsigned fid, unsigned dword11,
-			dma_addr_t dma_addr, u32 *result);
+		      void *buffer, size_t buflen, u32 *result);
 int nvme_set_queue_count(struct nvme_ctrl *ctrl, int *count);
 void nvme_start_keep_alive(struct nvme_ctrl *ctrl);
 void nvme_stop_keep_alive(struct nvme_ctrl *ctrl);
