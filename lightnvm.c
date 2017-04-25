@@ -754,7 +754,7 @@ static int nvme_nvm_user_vcmd(struct nvme_ns *ns, int admin,
 	c.common.cdw2[1] = cpu_to_le32(vcmd.cdw3);
 	/* cdw11-12 */
 	c.ph_rw.length = cpu_to_le16(vcmd.nppas);
-	c.ph_rw.control  = cpu_to_le32(vcmd.control);
+	c.ph_rw.control  = cpu_to_le16(vcmd.control);
 	c.common.cdw10[3] = cpu_to_le32(vcmd.cdw13);
 	c.common.cdw10[4] = cpu_to_le32(vcmd.cdw14);
 	c.common.cdw10[5] = cpu_to_le32(vcmd.cdw15);
@@ -1001,14 +1001,14 @@ int nvme_nvm_ns_supported(struct nvme_ns *ns, struct nvme_id_ns *id)
 				pdev->device == PCI_DEVICE_ID_CNEX_WL &&
 							id->vs[0] == 0x1)
 		return 1;
-	
+
 	/* Freescale DFC - PCI ID + Vendor specific bit */
 	if (pdev->vendor == PCI_VENDOR_ID_FREESCALE &&
 				pdev->device == PCI_DEVICE_ID_FREESCALE_DFC &&
 							id->vs[0] == 0x1) {
-		printk(KERN_INFO "lnvm: Dragon Fire Card NVMe support.\n");
-                return 1;
-        }
+		printk(KERN_INFO "lnvm: Dragon Card NVMe driver support.\n");
+		return 1;
+	}
 
 	return 0;
 }
