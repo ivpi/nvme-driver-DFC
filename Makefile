@@ -9,25 +9,29 @@ build:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
 
 clean:
-	rm -rf *.0 *~ core .depend .*.cmd *.ko *.mod.c *.o
+	rm -rf *.0 *~ .depend .*.cmd *.ko *.mod.c *.o
 	rm -f modules.order Module.symvers
 
 else
 
 $(info Building with KERNELRELEASE = ${KERNELRELEASE})
 
-obj-$(CONFIG_NVME_CORE)			+= nvme-core.o
-obj-$(CONFIG_BLK_DEV_NVME)		+= nvme.o
-obj-$(CONFIG_NVME_FABRICS)		+= nvme-fabrics.o
-obj-$(CONFIG_NVME_RDMA)			+= nvme-rdma.o
+obj-m			+= nvme-core.o
+obj-m			+= nvme.o
+obj-m			+= nvme-fabrics.o
+obj-m			+= nvme-rdma.o
+obj-m			+= nvme-fc.o
 
 nvme-core-y				:= core.o
-nvme-core-$(CONFIG_BLK_DEV_NVME_SCSI)	+= scsi.o
-nvme-core-$(CONFIG_NVM)			+= lightnvm.o
+nvme-core-y				+= scsi.o
+nvme-core-y				+= lightnvm.o
 
 nvme-y					+= pci.o
+
 nvme-fabrics-y				+= fabrics.o
+
 nvme-rdma-y				+= rdma.o
 
-endif
+nvme-fc-y				+= fc.o
 
+endif
