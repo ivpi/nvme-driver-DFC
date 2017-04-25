@@ -981,6 +981,8 @@ void nvme_nvm_unregister_sysfs(struct nvme_ns *ns)
 #define PCI_VENDOR_ID_CNEX 0x1d1d
 #define PCI_DEVICE_ID_CNEX_WL 0x2807
 #define PCI_DEVICE_ID_CNEX_QEMU 0x1f1f
+#define PCI_VENDOR_ID_FREESCALE 0x1957
+#define PCI_DEVICE_ID_FREESCALE_DFC 0x8040
 
 int nvme_nvm_ns_supported(struct nvme_ns *ns, struct nvme_id_ns *id)
 {
@@ -999,6 +1001,14 @@ int nvme_nvm_ns_supported(struct nvme_ns *ns, struct nvme_id_ns *id)
 				pdev->device == PCI_DEVICE_ID_CNEX_WL &&
 							id->vs[0] == 0x1)
 		return 1;
+	
+	/* Freescale DFC - PCI ID + Vendor specific bit */
+	if (pdev->vendor == PCI_VENDOR_ID_FREESCALE &&
+				pdev->device == PCI_DEVICE_ID_FREESCALE_DFC &&
+							id->vs[0] == 0x1) {
+		printk(KERN_INFO "lnvm: Dragon Fire Card NVMe support.\n");
+                return 1;
+        }
 
 	return 0;
 }
